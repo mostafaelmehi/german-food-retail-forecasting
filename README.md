@@ -6,8 +6,7 @@ Gruppenprojekt im Modul **Zeitreihenanalyse**, Fachhochschule Dortmund (Vortrag 
 
 ## Fragestellung
 
-Lässt sich der monatliche reale Umsatz im deutschen Lebensmitteleinzelhandel mit ARIMA-Modellen zuverlässig prognostizieren, und wie schneiden diese im Vergleich zu Holt-Winters ab?
-
+Lässt sich der monatliche reale Umsatz im deutschen Lebensmitteleinzelhandel mit ARIMA-Modellen zuverlässig prognostizieren, und wie schneiden diese im Vergleich zu Holt-Winters und einer Seasonal-Naive-Baseline ab?
 ## Daten
 
 | | |
@@ -20,6 +19,17 @@ Lässt sich der monatliche reale Umsatz im deutschen Lebensmitteleinzelhandel mi
 | Frequenz | monatlich, Originalwerte (nicht saisonbereinigt) |
 
 Lizenz der Daten: Datenlizenz Deutschland – Namensnennung – Version 2.0 (dl-de/by-2-0).
+
+## Methodische Entscheidungen
+
+Gelten für alle Modelle und sind in `src/evaluation.py` umgesetzt. Kein Notebook teilt die Daten anders auf.
+
+| Entscheidung | Festlegung | Begründung |
+|---|---|---|
+| Validierung | Historischer Train-Test-Split: Training 01/1994–08/2024 (368 Monate), Test 09/2024–08/2026 (24 Monate) | Zeitliche statt zufälliger Aufteilung (Vorlesung 2, Folien 25 und 27); 24 Monate = zwei volle Saisonzyklen |
+| Prognose | Einmaliges Training, Prognose aller 24 Testmonate auf einmal | Entspricht der Planungssituation; Testmenge wird erst nach der Modellwahl verwendet |
+| Hauptmetrik | RMSE, ergänzend MAE und MAPE; Fehler e_t = ŷ_t − y_t | RMSE und MAE: Vorlesung 2, Folie 24; RMSE gewichtet große Fehler (z. B. Dezember) stärker; MAPE zusätzlich, da die Reihe keine Nullen enthält |
+| Baseline | Seasonal Naive: ŷ_{T+h} = Wert desselben Monats im letzten Trainingsjahr | Einfaches Referenzverfahren als Maßstab für SARIMA und Holt-Winters |
 
 ## Projektstruktur
 
