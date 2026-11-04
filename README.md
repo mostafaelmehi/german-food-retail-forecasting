@@ -7,6 +7,7 @@ Gruppenprojekt im Modul **Zeitreihenanalyse**, Fachhochschule Dortmund (Vortrag 
 ## Fragestellung
 
 Lässt sich der monatliche reale Umsatz im deutschen Lebensmitteleinzelhandel mit ARIMA-Modellen zuverlässig prognostizieren, und wie schneiden diese im Vergleich zu Holt-Winters und einer Seasonal-Naive-Baseline ab?
+
 ## Daten
 
 | | |
