@@ -288,3 +288,38 @@ def modellgleichung(res) -> str:
     c = res.params.get("intercept")
     konstante = "" if c is None else f"{'-' if c < 0 else ''}{_zahl(c)} + "
     return f"{links}\\,Y_t = {konstante}{rechts}\\,\\varepsilon_t"
+def prognose(res, horizont: int, alpha: float = 0.05):
+    """Prognose für die nächsten `horizont` Monate nach dem Trainingsende.
+
+    Gibt die Punktprognose (Series) und das (1 − alpha)-Prognoseintervall
+    (DataFrame mit Spalten "unten", "oben") zurück. Das Modell wird dabei nicht
+    neu geschätzt; Testwerte gehen nicht ein (Vorlesung 3, Folie 42).
+    """
+    fc = res.get_forecast(steps=horizont)
+    punkt = fc.predicted_mean.rename("sarima")
+    ki = fc.conf_int(alpha=alpha)
+    ki.columns = ["unten", "oben"]
+    return punkt, ki
+
+
+def abdeckung(test: pd.Series, intervall: pd.DataFrame) -> float:
+    """Anteil der Testwerte, die im Prognoseintervall liegen."""
+    drin = (test >= intervall["unten"]) & (test <= intervall["oben"])
+    return float(drin.mean())
+
+
+def plot_prognose(train, test, punkt, intervall, jahre_zurueck: int = 4):
+    """Letzte Trainingsjahre, Testwerte, SARIMA-Prognose und 95%-Prognoseintervall."""
+    fig, ax = plt.subplots(figsize=(11, 4))
+    start = test.index[0] - pd.DateOffset(years=jahre_zurueck)
+    ax.plot(train[start:].index, train[start:], color="grey", lw=1, label="Training")
+    ax.plot(test.index, test, color="black", lw=1.8, marker="o", ms=3, label="Test (wahre Werte)")
+    ax.plot(punkt.index, punkt, color="tab:blue", lw=1.5, ls="--", label="SARIMA-Prognose")
+    ax.fill_between(intervall.index, intervall["unten"], intervall["oben"],
+                    color="tab:blue", alpha=0.15, label="95%-Prognoseintervall")
+    ax.axvline(test.index[0], color="grey", ls=":", lw=1)
+    ax.set_xlabel("Monat")
+    ax.set_ylabel("Index (2021 = 100)")
+    ax.set_title("SARIMA: Prognose der 24 Testmonate")
+    ax.legend(loc="upper left", fontsize=8)
+    return fig
