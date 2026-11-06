@@ -3,13 +3,15 @@
 Identifikation und Anpassung verwenden ausschließlich die Trainingsdaten.
 Die Testdaten werden erst für die Prognosebewertung benutzt.
 """
+import itertools
 import warnings
 
 import matplotlib.pyplot as plt
 import pandas as pd
 from scipy import stats
-from statsmodels.graphics.tsaplots import plot_acf
-from statsmodels.tsa.stattools import acf, adfuller, kpss
+from statsmodels.graphics.tsaplots import plot_acf, plot_pacf
+from statsmodels.tsa.statespace.sarimax import SARIMAX
+from statsmodels.tsa.stattools import acf, adfuller, kpss, pacf
 
 SAISON = 12
 
@@ -106,3 +108,72 @@ def plot_differenzen(reihen: dict, lags: int = 36):
         ax_a.set_xticks(range(0, lags + 1, SAISON))
     fig.tight_layout()
     return fig
+
+def plot_acf_pacf(x: pd.Series, lags: int = 36, titel: str = ""):
+    """ACF (links) und PACF (rechts) bis Lag 36, damit die Lags 12, 24, 36 sichtbar sind."""
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 3.8))
+    plot_acf(x, lags=lags, ax=ax1, title=f"ACF {titel}")
+    plot_pacf(x, lags=lags, ax=ax2, method="ywm", title=f"PACF {titel}")
+    for ax in (ax1, ax2):
+        ax.set_xticks(range(0, lags + 1, SAISON))
+    fig.tight_layout()
+    return fig
+
+
+def acf_pacf_tabelle(x: pd.Series, lags: int = 36, alpha: float = 0.05) -> pd.DataFrame:
+    """ACF und PACF je Lag; signifikant = außerhalb des 95%-Bands (wie in den Grafiken)."""
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", FutureWarning)  # Hinweis zum Rückgabeformat
+        a, a_ki = acf(x, nlags=lags, alpha=alpha)
+        p, p_ki = pacf(x, nlags=lags, alpha=alpha, method="ywm")
+    tab = pd.DataFrame(
+        {
+            "ACF": a,
+            "ACF signifikant": (a_ki[:, 0] > 0) | (a_ki[:, 1] < 0),
+            "PACF": p,
+            "PACF signifikant": (p_ki[:, 0] > 0) | (p_ki[:, 1] < 0),
+        },
+        index=pd.RangeIndex(0, lags + 1, name="Lag"),
+    )
+    return tab.iloc[1:]
+
+def modell_name(order, seasonal_order) -> str:
+    """Kurzname wie SARIMA(1,0,1)(2,1,2)[12]."""
+    p, d, q = order
+    P, D, Q = seasonal_order
+    return f"SARIMA({p},{d},{q})({P},{D},{Q})[{SAISON}]"
+
+
+def anpassen(train: pd.Series, order, seasonal_order, trend: str = "c"):
+    """Schätzt ein SARIMA-Modell per Maximum Likelihood auf den Trainingsdaten.
+
+    order = (p, d, q), seasonal_order = (P, D, Q); die Saisonlänge ist 12.
+    trend="c": konstanter Term in der differenzierten Gleichung.
+    """
+    modell = SARIMAX(train, order=order, seasonal_order=(*seasonal_order, SAISON), trend=trend)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")  # Konvergenz wird in aic_gitter über mle_retvals geprüft
+        return modell.fit(disp=False, maxiter=200)
+
+
+def aic_gitter(train: pd.Series, d: int, D: int, trend: str = "c", max_ordnung: int = 2) -> pd.DataFrame:
+    """Alle Modelle mit p, q, P, Q ∈ {0, …, max_ordnung} bei festem d, D und trend.
+
+    AIC ist nur bei gleichem d, D und gleichem trend vergleichbar (gleiche Daten
+    in der Likelihood). Sortiert nach AIC; ΔAIC = Abstand zum besten Modell.
+    """
+    zeilen = []
+    for p, q, P, Q in itertools.product(range(max_ordnung + 1), repeat=4):
+        res = anpassen(train, (p, d, q), (P, D, Q), trend)
+        zeilen.append(
+            {
+                "Modell": modell_name((p, d, q), (P, D, Q)),
+                "p": p, "q": q, "P": P, "Q": Q,
+                "Parameter": len(res.params),
+                "AIC": res.aic,
+                "konvergiert": bool(res.mle_retvals.get("converged", True)),
+            }
+        )
+    tab = pd.DataFrame(zeilen).sort_values("AIC").reset_index(drop=True)
+    tab["ΔAIC"] = tab["AIC"] - tab["AIC"].min()
+    return tab

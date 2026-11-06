@@ -6,6 +6,7 @@ import matplotlib
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+import pandas as pd
 import pytest
 
 from src import arima
@@ -53,3 +54,26 @@ def test_tabelle_p_werte_im_bereich(train):
     assert list(tab.index) == ["Original", "saisonal"]
     assert ((tab[["ADF p", "KPSS p"]] >= 0) & (tab[["ADF p", "KPSS p"]] <= 1)).all().all()
     plt.close(arima.plot_differenzen(reihen))
+
+
+def test_acf_pacf_tabelle(train):
+    x = arima.differenzieren(train, D=1)
+    tab = arima.acf_pacf_tabelle(x, lags=36)
+    # Lag 1 bis 36, Lag 0 (immer 1) ist nicht enthalten
+    assert list(tab.index) == list(range(1, 37))
+    assert tab["ACF"].abs().max() <= 1 and tab["PACF"].abs().max() <= 1
+    plt.close(arima.plot_acf_pacf(x))    
+
+def test_modell_kennt_nur_trainingsdaten(train):
+    res = arima.anpassen(train, (1, 0, 0), (0, 1, 1))
+    # Das Modell wurde genau auf den 368 Trainingsmonaten geschätzt (bis 08/2024)
+    assert res.nobs == len(train) == 368
+    assert res.fittedvalues.index[-1] == pd.Timestamp("2024-08-01")
+
+
+def test_aic_gitter_aufbau(train):
+    tab = arima.aic_gitter(train, d=0, D=1, max_ordnung=0)
+    # max_ordnung=0: nur SARIMA(0,0,0)(0,1,0)[12]
+    assert len(tab) == 1
+    assert tab.loc[0, "Modell"] == "SARIMA(0,0,0)(0,1,0)[12]"
+    assert tab.loc[0, "ΔAIC"] == 0    
