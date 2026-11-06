@@ -7,9 +7,11 @@ import itertools
 import warnings
 
 import matplotlib.pyplot as plt
+import numpy as np
 import pandas as pd
 from scipy import stats
 from statsmodels.graphics.tsaplots import plot_acf, plot_pacf
+from statsmodels.stats.diagnostic import acorr_ljungbox
 from statsmodels.tsa.statespace.sarimax import SARIMAX
 from statsmodels.tsa.stattools import acf, adfuller, kpss, pacf
 
@@ -177,3 +179,112 @@ def aic_gitter(train: pd.Series, d: int, D: int, trend: str = "c", max_ordnung: 
     tab = pd.DataFrame(zeilen).sort_values("AIC").reset_index(drop=True)
     tab["ΔAIC"] = tab["AIC"] - tab["AIC"].min()
     return tab
+# Symbole wie im Bericht: φ/θ (nicht-saisonal), Φ/Θ (saisonal), c (Konstante)
+SYMBOLE = {
+    "intercept": "c",
+    "ar.L1": "φ₁", "ar.L2": "φ₂", "ar.L3": "φ₃",
+    "ma.L1": "θ₁", "ma.L2": "θ₂",
+    "ar.S.L12": "Φ₁", "ar.S.L24": "Φ₂",
+    "ma.S.L12": "Θ₁", "ma.S.L24": "Θ₂",
+    "sigma2": "σ²",
+}
+
+
+def koeffizienten(res) -> pd.DataFrame:
+    """Geschätzte Koeffizienten mit Standardfehler und p-Wert (Vorlesung 3, Folie 34)."""
+    tab = pd.DataFrame(
+        {"Schätzer": res.params, "Std.-Fehler": res.bse, "p-Wert": res.pvalues}
+    )
+    tab.index = [SYMBOLE.get(name, name) for name in tab.index]
+    return tab
+
+
+def residuen(res) -> pd.Series:
+    """Residuen ohne die ersten d + 12·D Werte (durch die Differenzen nicht aussagekräftig)."""
+    return res.resid.iloc[res.loglikelihood_burn:]
+
+
+def ljung_box(res, lags=(12, 24)) -> pd.DataFrame:
+    """Ljung-Box-Test der Residuen (H0: keine Autokorrelation bis Lag k).
+
+    Freiheitsgrade um die Zahl der ARMA-Parameter p + q + P + Q reduziert.
+    """
+    m = res.model
+    k = m.k_ar_params + m.k_ma_params + m.k_seasonal_ar_params + m.k_seasonal_ma_params
+    tab = acorr_ljungbox(residuen(res), lags=list(lags), model_df=k)
+    tab.index.name = "Lag"
+    return tab.rename(columns={"lb_stat": "Q", "lb_pvalue": "p-Wert"})
+
+
+def kandidaten_vergleich(modelle: dict) -> pd.DataFrame:
+    """Kennzahlen je Kandidat für die Modellwahl in Abschnitt 6 (alles Trainingsdaten)."""
+    zeilen = {}
+    for name, res in modelle.items():
+        koef = koeffizienten(res).drop(index=["c", "σ²"], errors="ignore")
+        lb = ljung_box(res)
+        e = residuen(res)
+        zeilen[name] = {
+            "Parameter": len(res.params),
+            "AIC": res.aic,
+            "σ²": res.params["sigma2"],
+            "nicht signifikante Koeffizienten (p > 0,05)": int((koef["p-Wert"] > 0.05).sum()),
+            "Ljung-Box p (Lag 12)": lb.loc[12, "p-Wert"],
+            "Ljung-Box p (Lag 24)": lb.loc[24, "p-Wert"],
+            "Jarque-Bera p": stats.jarque_bera(e).pvalue,
+        }
+    tab = pd.DataFrame(zeilen).T
+    tab["ΔAIC"] = tab["AIC"] - tab["AIC"].min()
+    return tab
+
+
+def plot_residuen(res, titel: str = "", lags: int = 36):
+    """Residuendiagnose: Verlauf, ACF, Histogramm mit Normalverteilung, Q-Q-Plot."""
+    e = residuen(res)
+    fig, axes = plt.subplots(2, 2, figsize=(12, 7))
+    ax = axes[0, 0]
+    ax.plot(e.index, e, lw=0.8)
+    ax.axhline(0, color="black", lw=0.6)
+    ax.set_title("Residuen im Zeitverlauf")
+    plot_acf(e, lags=lags, ax=axes[0, 1], title="ACF der Residuen")
+    axes[0, 1].set_xticks(range(0, lags + 1, SAISON))
+    ax = axes[1, 0]
+    ax.hist(e, bins=30, density=True, alpha=0.7)
+    x = np.linspace(e.min(), e.max(), 200)
+    ax.plot(x, stats.norm.pdf(x, e.mean(), e.std()), color="tab:red", label="Normalverteilung")
+    ax.set_title("Histogramm")
+    ax.legend(fontsize=8)
+    stats.probplot(e, dist="norm", plot=axes[1, 1])
+    axes[1, 1].set_title("Q-Q-Plot")
+    fig.suptitle(titel)
+    fig.tight_layout()
+    return fig
+def _zahl(x: float) -> str:
+    """Betrag mit drei Nachkommastellen und Dezimalkomma (LaTeX)."""
+    return f"{abs(x):.3f}".replace(".", "{,}")
+
+
+def _polynom(res, praefix: str, ar: bool) -> str:
+    """AR-Polynom (1 − a₁B^k − …) oder MA-Polynom (1 + b₁B^k + …) aus den Schätzern."""
+    teile = ["1"]
+    for name, wert in res.params.items():
+        if name.startswith(praefix):
+            lag = int(name.split("L")[-1])
+            koef = -wert if ar else wert
+            zeichen = "+" if koef >= 0 else "-"
+            potenz = "B" if lag == 1 else f"B^{{{lag}}}"
+            teile.append(f"{zeichen} {_zahl(koef)}\\,{potenz}")
+    return f"({' '.join(teile)})" if len(teile) > 1 else ""
+
+
+def modellgleichung(res) -> str:
+    """Geschätzte Modellgleichung in Backshift-Schreibweise als LaTeX (Vorlesung 3, Folien 34 und 37)."""
+    m = res.model
+    links = _polynom(res, "ar.L", ar=True) + _polynom(res, "ar.S.L", ar=True)
+    if m.k_diff:
+        links += "(1 - B)"
+    if m.k_seasonal_diff:
+        links += f"(1 - B^{{{m.seasonal_periods}}})"
+    rechts = _polynom(res, "ma.L", ar=False) + _polynom(res, "ma.S.L", ar=False)
+    c = res.params.get("intercept")
+    konstante = "" if c is None else f"{'-' if c < 0 else ''}{_zahl(c)} + "
+    return f"{links}\\,Y_t = {konstante}{rechts}\\,\\varepsilon_t"
