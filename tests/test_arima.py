@@ -95,4 +95,13 @@ def test_modellgleichung(train):
     gl = arima.modellgleichung(res)
     # saisonale Differenz links, MA-Teile rechts, Dezimalkomma
     assert "(1 - B^{12})" in gl and "Y_t" in gl and "\\varepsilon_t" in gl
-    assert "{,}" in gl    
+    assert "{,}" in gl
+def test_prognose_passt_zum_test():
+    train, test = train_test_split(load_umsatz(str(DATEN)))
+    res = arima.anpassen(train, (1, 0, 0), (0, 1, 1))
+    punkt, ki = arima.prognose(res, len(test))
+    # gleiche 24 Monate wie die Testmenge, Intervall umschließt die Prognose
+    assert punkt.index.equals(test.index)
+    assert ((ki["unten"] <= punkt) & (punkt <= ki["oben"])).all()
+    assert 0 <= arima.abdeckung(test, ki) <= 1
+    plt.close(arima.plot_prognose(train, test, punkt, ki))        
