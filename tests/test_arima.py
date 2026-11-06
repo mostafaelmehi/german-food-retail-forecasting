@@ -77,3 +77,22 @@ def test_aic_gitter_aufbau(train):
     assert len(tab) == 1
     assert tab.loc[0, "Modell"] == "SARIMA(0,0,0)(0,1,0)[12]"
     assert tab.loc[0, "ΔAIC"] == 0    
+
+def test_residuen_und_ljung_box(train):
+    res = arima.anpassen(train, (1, 0, 0), (0, 1, 1))
+    e = arima.residuen(res)
+    # d + 12·D = 12 Startwerte werden entfernt
+    assert len(e) == len(train) - 12
+    lb = arima.ljung_box(res)
+    assert list(lb.index) == [12, 24]
+    assert lb["p-Wert"].between(0, 1).all()
+    koef = arima.koeffizienten(res)
+    assert {"c", "φ₁", "Θ₁", "σ²"} <= set(koef.index)
+    plt.close(arima.plot_residuen(res))    
+    
+def test_modellgleichung(train):
+    res = arima.anpassen(train, (1, 0, 1), (0, 1, 1))
+    gl = arima.modellgleichung(res)
+    # saisonale Differenz links, MA-Teile rechts, Dezimalkomma
+    assert "(1 - B^{12})" in gl and "Y_t" in gl and "\\varepsilon_t" in gl
+    assert "{,}" in gl    
